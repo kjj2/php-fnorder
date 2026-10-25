@@ -1,0 +1,199 @@
+<?php
+if(!isset($fnorder_lib_semaphore)){
+$fnorder_lib_semaphore=TRUE;
+
+class fnorder{
+ var $connection;
+ var $common;
+ var $rare;
+ var $formats;
+ function fnorder($common=2,$rare=10){
+  list($usec,$sec)=explode(' ',microtime());
+  $seed=(float)($sec+((float)$usec*100000));
+  srand($seed);
+  $this->connection=mysql_connect("localhost","fnord","fnord");
+  mysql_select_db("fnord",$this->connection);
+  $this->common=$common;
+  $this->rare=$rare;
+  $q="SELECT * FROM syntaxes";
+  $r=mysql_query($q,$this->connection);
+  while($row=mysql_fetch_array($r)){
+   $this->formats[]=$row['syntax'];
+  }
+  return $this;
+ }
+ function random($max){
+  $retval=floor(rand(0,$max));
+  return $retval;
+ }
+ function tokenize($in){
+  $retval=array();
+  $state="OUT";
+  $pos=0;
+  $cur="";
+  $ctype="_";
+  $done=FALSE;
+  for($pos=0;$pos<strlen($in);$pos++){
+//  while(!$done){
+   if("OUT"==$state){
+    if(" "==$in[$pos]){
+     $this->debug("still: OUT",$pos,$ctype);
+     $cur=$cur;
+    }elseif("."==$in[$pos] OR ";"==$in[$pos]){
+     $this->debug("still: OUT by punctuation",$pos,$ctype);
+$this->debug5($cur,$ctype);
+     $retval[]=array("_",$in[$pos]);
+    }elseif("{"==$in[$pos]){
+     $this->debug("Change to state: 1",$pos,$ctype);
+//     $ctype="_";
+     $state=1;
+    }elseif("!"==$in[$pos]){
+     $ctype="!";
+    }elseif("@"==$in[$pos]){
+     $ctype="@";
+    }elseif("#"==$in[$pos]){
+     $ctype="#";
+    }elseif("_"==$in[$pos]){
+     $ctype="_";
+    }else{
+     $this->debug("Change to state: IN",$pos);
+     $state="IN";
+     $cur.=$in[$pos];
+    }
+   }elseif("IN"==$state){
+    if(" "==$in[$pos]){
+     $this->debug("Change to state: OUT",$pos);
+$this->debug5($cur,$ctype);
+     $retval[]=array($ctype,$cur);
+     $cur="";
+     $ctype="_";
+     $state="OUT";
+    }elseif("."==$in[$pos] OR ";"==$in[$pos]){
+     $this->debug("Change to state: OUT by punctuation",$pos);
+$this->debug5($cur,$ctype);
+     $retval[]=array($ctype,$cur);
+     $cur="";
+     $ctype="_";
+     $state="OUT";
+$this->debug5($cur,$ctype);
+     $retval[]=array("_",$in[$pos]);
+//     $pos--;
+    }else{
+     $this->debug("still: IN",$pos);
+     $cur.=$in[$pos];
+    }
+   }else{
+    if("{"==$in[$pos]){
+     $state++;
+     $this->debug("Change to state: ".$state,$pos);
+    }elseif("}"==$in[$pos]){
+     $state--;
+     $this->debug("Change to state: ".$state,$pos);
+    }else{
+     $this->debug("still:  ".$state,$pos,$ctype);
+     $cur.=$in[$pos];
+    }
+    if($state==0){
+     $state="OUT";
+     $this->debug("Change to state: ".$state,$pos);
+$this->debug5($cur,$ctype);
+     $retval[]=array($ctype,$cur);
+     $cur="";
+     $ctype="_";
+    }
+   }
+//   $pos++;
+//   if($pos==strlen($in))$done=TRUE;
+  }
+  if(""!=$cur){
+$this->debug5($cur,$ctype);
+   $retval[]=array($ctype,$cur);
+  }
+  return $retval;
+ }
+ function parse($in){
+  $this->debug2("parse(\"".$in."\")");
+  $retval="";
+//  if("_;"==$in OR "_."==$in)return $in[1];
+  $tokens=$this->tokenize($in);
+  if(count($tokens)==1){
+   $retval=$this->handle_token($tokens[0]);
+  }else{
+   while(list($key,$val)=each($tokens)){
+    $temp=$this->parse($val[0].$val[1]);
+    if(";"==$temp OR "."==$temp){
+     $retval.=$temp;
+    }else{
+     $retval.=" ".$this->parse($val[0].$val[1]);
+    }
+//    echo "<FONT color=blue>What I've got so far: \"".$retval."\"</FONT><BR>";
+   }
+  }
+  $this->debug2("parse() out: ".$retval);
+  return $retval;
+ }
+ function handle_token($token){
+  $this->debug3("handling (".$token[0].",".$token[1].")");
+  $retval="BOGUS".$token[0];
+  if("_"==$token[0]){
+   $retval=$token[1];
+  }elseif("!"==$token[0]){
+   $retval=$this->lookup($token[1]);
+  }elseif("@"==$token[0]){
+   if($this->random($this->common)<1){
+    $retval=$this->lookup($token[1]);
+   }else{
+    $retval="";
+   }
+  }elseif("#"==$token[0]){
+   if($this->random($this->rare)<1){
+    $retval=$this->lookup($token[1]);
+   }else{
+    $retval="";
+   }
+  }else{
+   $retval="Unknown type";
+  }
+  return $retval;
+ }
+ function lookup($type){
+  $this->debug4("looking up a ".$type);
+  $q="SELECT COUNT(*) AS cnt FROM ".$type;
+  $this->debug4($q);
+  $r=mysql_query($q,$this->connection);
+  $row=mysql_fetch_array($r);
+  $word=$this->random($row['cnt']-1);
+  $q="SELECT * FROM ".$type." WHERE id=".$word;
+  $r=mysql_query($q,$this->connection);
+  $row=mysql_fetch_array($r);
+  return $row['phrase'];
+ }
+ function debug($string,$pos=0,$type="?",$bail=FALSE){
+//  echo "\n<BR>".$string." at position: ".$pos." ctype=".$type."<BR>\n";
+  if(TRUE==$bail)exit();
+ }
+ function debug2($string){
+//  echo "\n<BR>".$string."<BR>\n";
+ }
+ function debug3($string){
+//  echo "\n<BR>".$string."<BR>\n";
+ }
+ function debug4($string){
+//  echo "\n<BR>".$string."<BR>\n";
+ }
+ function debug5($string,$type="?"){
+//  echo "\n<BR>".$type."-->".$string."<BR>\n";
+ }
+ function fnord($format="_RANDOM_"){
+  if("_RANDOM_"==$format){
+   $format=$this->random(count($this->formats)-1);
+  }
+  $line=$this->formats[$format];
+  $this->debug3("Line: ".$line);
+  $retval=$this->parse($line);
+  return ucfirst(trim($retval));
+ }
+}
+
+}
+?>
